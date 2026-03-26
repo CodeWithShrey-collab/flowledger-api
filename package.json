@@ -1,0 +1,17 @@
+{
+  "name": "flowledger-backend",
+  "version": "1.0.0",
+  "description": "FlowLedger backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.7.0"
+  }
+}
