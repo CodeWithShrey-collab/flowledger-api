@@ -104,13 +104,13 @@ function detectDirection(text = "") {
 
 function detectCategory(name = "", body = "") {
   const t = `${name} ${body}`.toLowerCase();
-  if (/(zomato|swiggy|domino|pizza|starbucks|cafe|restaurant|food|mcdonald|subway|burger|kitchen|biryani|chai|tea|bakery|dhaba|mess)/.test(t)) return "Food";
-  if (/(uber|ola|rapido|metro|cab|ride|transport|auto|rickshaw|taxi)/.test(t)) return "Transport";
-  if (/(petrol|fuel|indianoil|bharat petroleum|bpcl|hpcl|pump|diesel|cng)/.test(t)) return "Fuel";
-  if (/(amazon|flipkart|myntra|shopping|store|decathlon|ajio|meesho|nykaa|croma|reliance digital)/.test(t)) return "Shopping";
-  if (/(jio|airtel|mseb|electric|bill|recharge|postpaid|broadband|wifi|internet|gas|water|electricity|vi|vodafone|bsnl)/.test(t)) return "Bills";
-  if (/(pvr|bookmyshow|netflix|spotify|movie|cinema|prime|hotstar|disney|youtube|gaming|game|inox)/.test(t)) return "Entertainment";
-  if (/(flight|travel|rail|train|hotel|irctc|makemytrip|goibibo|booking|airbnb|oyo)/.test(t)) return "Travel";
+  if (/\b(zomato|swiggy|domino|pizza|starbucks|cafe|restaurant|food|mcdonald|subway|burger|kitchen|biryani|chai|tea|bakery|dhaba|mess)\b/.test(t)) return "Food";
+  if (/\b(uber|ola|rapido|metro|cab|ride|transport|auto|rickshaw|taxi)\b/.test(t)) return "Transport";
+  if (/\b(petrol|fuel|indianoil|bharat petroleum|bpcl|hpcl|pump|diesel|cng)\b/.test(t)) return "Fuel";
+  if (/\b(amazon|flipkart|myntra|shopping|store|decathlon|ajio|meesho|nykaa|croma|reliance digital)\b/.test(t)) return "Shopping";
+  if (/\b(jio|airtel|mseb|electric|bill|recharge|postpaid|broadband|wifi|internet|gas|water|electricity|vi|vodafone|bsnl)\b/.test(t)) return "Bills";
+  if (/\b(pvr|bookmyshow|netflix|spotify|movie|cinema|prime|hotstar|disney|youtube|gaming|game|inox)\b/.test(t)) return "Entertainment";
+  if (/\b(flight|travel|rail|train|hotel|irctc|makemytrip|goibibo|booking|airbnb|oyo)\b/.test(t)) return "Travel";
   return "Person Transfer";
 }
 
