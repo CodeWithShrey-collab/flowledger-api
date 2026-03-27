@@ -264,6 +264,26 @@ app.get("/api/summary", async (_req, res) => {
     const totalLent = ledger.filter(e => e.type === "lent").reduce((s, e) => s + e.amount, 0);
     const totalBorrowed = ledger.filter(e => e.type === "borrowed").reduce((s, e) => s + e.amount, 0);
 
+    // Smart Subscription Detection
+    const debitMap = {};
+    for (const t of tx) {
+      if (t.direction !== "debit") continue;
+      const key = t.name.toLowerCase();
+      if (!debitMap[key]) debitMap[key] = [];
+      debitMap[key].push({ d: new Date(t.createdAt), a: t.amount, i: t.icon });
+    }
+
+    const subscriptions = [];
+    for (const [name, instances] of Object.entries(debitMap)) {
+      if (instances.length < 2) continue;
+      // Simple heuristic: Same name, similar amount, different months
+      const months = new Set(instances.map(inst => `${inst.d.getMonth()}-${inst.d.getFullYear()}`));
+      if (months.size >= 2) {
+        const avg = instances.reduce((s, i) => s + i.a, 0) / instances.length;
+        subscriptions.push({ name: name.charAt(0).toUpperCase() + name.slice(1), avgAmount: Math.round(avg), count: instances.length, icon: instances[0].icon });
+      }
+    }
+
     res.json({
       success: true,
       data: {
@@ -273,6 +293,7 @@ app.get("/api/summary", async (_req, res) => {
         budget: userDoc ? userDoc.budget : 0,
         topCategory, count: tx.length, categoryTotals,
         totalLent, totalBorrowed,
+        subscriptions,
       },
     });
   } catch (e) {
