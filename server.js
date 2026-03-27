@@ -195,6 +195,23 @@ app.post("/api/user", async (req, res) => {
   }
 });
 
+app.delete("/api/user/reset", async (req, res) => {
+  try {
+    const batch = db.batch();
+    const collections = ["transactions", "notifications", "ledger"];
+    for (const c of collections) {
+      const snap = await db.collection(c).get();
+      snap.docs.forEach(d => batch.delete(d.ref));
+    }
+    // Also reset main balance
+    batch.update(db.collection("users").doc("me"), { balance: 0 });
+    await batch.commit();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 app.get("/api/transactions", async (_req, res) => {
   try {
     const s = await db.collection("transactions").orderBy("createdAt", "desc").get();
