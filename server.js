@@ -24,14 +24,18 @@ app.use(express.json());
 // ---------------------------------------------------------------------------
 const CATEGORY_META = {
   Food: { icon: "🍔", color: "#F59E0B" },
+  Groceries: { icon: "🛒", color: "#10B981" },
   Transport: { icon: "🚗", color: "#3B82F6" },
   Fuel: { icon: "⛽", color: "#F97316" },
   Shopping: { icon: "🛍️", color: "#8B5CF6" },
-  Bills: { icon: "⚡", color: "#10B981" },
+  Bills: { icon: "⚡", color: "#06B6D4" },
   Entertainment: { icon: "🎬", color: "#EC4899" },
-  Travel: { icon: "✈️", color: "#06B6D4" },
+  Travel: { icon: "✈️", color: "#6366F1" },
+  Health: { icon: "💊", color: "#EF4444" },
+  Education: { icon: "📚", color: "#FBBF24" },
+  Investments: { icon: "📈", color: "#14B8A6" },
   "Money Received": { icon: "💸", color: "#16A34A" },
-  "Person Transfer": { icon: "👤", color: "#6366F1" },
+  "Person Transfer": { icon: "👤", color: "#8B5CF6" },
   Others: { icon: "💰", color: "#64748B" },
 };
 
@@ -104,13 +108,19 @@ function detectDirection(text = "") {
 
 function detectCategory(name = "", body = "") {
   const t = `${name} ${body}`.toLowerCase();
-  if (/\b(zomato|swiggy|domino|pizza|starbucks|cafe|restaurant|food|mcdonald|subway|burger|kitchen|biryani|chai|tea|bakery|dhaba|mess)\b/.test(t)) return "Food";
-  if (/\b(uber|ola|rapido|metro|cab|ride|transport|auto|rickshaw|taxi)\b/.test(t)) return "Transport";
-  if (/\b(petrol|fuel|indianoil|bharat petroleum|bpcl|hpcl|pump|diesel|cng)\b/.test(t)) return "Fuel";
-  if (/\b(amazon|flipkart|myntra|shopping|store|decathlon|ajio|meesho|nykaa|croma|reliance digital)\b/.test(t)) return "Shopping";
-  if (/\b(jio|airtel|mseb|electric|bill|recharge|postpaid|broadband|wifi|internet|gas|water|electricity|vi|vodafone|bsnl)\b/.test(t)) return "Bills";
-  if (/\b(pvr|bookmyshow|netflix|spotify|movie|cinema|prime|hotstar|disney|youtube|gaming|game|inox)\b/.test(t)) return "Entertainment";
-  if (/\b(flight|travel|rail|train|hotel|irctc|makemytrip|goibibo|booking|airbnb|oyo)\b/.test(t)) return "Travel";
+  
+  if (/\b(blinkit|zepto|instamart|bigbasket|dmart|spencer|reliance fresh|milk|dairy|grocery|supermarket|mart|kirana)\b/.test(t)) return "Groceries";
+  if (/\b(zomato|swiggy|domino|pizza|starbucks|cafe|restaurant|food|mcdonald|subway|burger|kitchen|biryani|chai|tea|bakery|dhaba|eats)\b/.test(t)) return "Food";
+  if (/\b(jio|airtel|mseb|bescom|electric|bill|recharge|postpaid|prepaid|broadband|wifi|internet|gas|water|electricity|vi|vodafone|bsnl|dth|tata play|tata sky)\b/.test(t)) return "Bills";
+  if (/\b(petrol|fuel|indianoil|bharat petroleum|bpcl|hpcl|pump|diesel|cng|filling station|indian oil|reliance petroleum|shell|nayara)\b/.test(t)) return "Fuel";
+  if (/\b(amazon|flipkart|myntra|shopping|store|decathlon|ajio|meesho|nykaa|croma|reliance digital|tata cliq|lifestyle|pantaloon|trends|zara|h&m)\b/.test(t)) return "Shopping";
+  if (/\b(uber|ola|rapido|metro|cab|ride|transport|auto|rickshaw|taxi|namma yatri|blusmart|indrive)\b/.test(t)) return "Transport";
+  if (/\b(flight|travel|rail|train|hotel|irctc|makemytrip|goibibo|booking|airbnb|oyo|redbus|abhibus|yatra|cleartrip|ticket)\b/.test(t)) return "Travel";
+  if (/\b(pvr|bookmyshow|netflix|spotify|movie|cinema|prime|hotstar|disney|youtube|gaming|game|inox|cinepolis|sony liv|zee5|steam|playstation|xbox|pubg|bgmi)\b/.test(t)) return "Entertainment";
+  if (/\b(pharmacy|medical|hospital|clinic|apollo|netmeds|pharmeasy|1mg|doctor|wellness|health|diagnostics|lab|medicine)\b/.test(t)) return "Health";
+  if (/\b(school|college|tuition|university|course|udemy|coursera|library|fee|education|academy|institute)\b/.test(t)) return "Education";
+  if (/\b(zerodha|groww|upstox|angel|mutual fund|sip|lic|insurance|premium|policy|coin|kuvera|indmoney|wazirx|binance|crypto|stock)\b/.test(t)) return "Investments";
+  
   return "Person Transfer";
 }
 
