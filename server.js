@@ -6,11 +6,8 @@ const admin = require("firebase-admin");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ---------------------------------------------------------------------------
-// Firebase Initialization
-// ---------------------------------------------------------------------------
-const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT 
-  ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT) 
+const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT
+  ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
   : require("./firebase-service-account.json");
 
 admin.initializeApp({ credential: admin.credential.cert(serviceAccountKey) });
@@ -19,9 +16,6 @@ const db = admin.firestore();
 app.use(cors());
 app.use(express.json());
 
-// ---------------------------------------------------------------------------
-// Category helpers
-// ---------------------------------------------------------------------------
 const CATEGORY_META = {
   Food: { icon: "🍔", color: "#F59E0B" },
   Groceries: { icon: "🛒", color: "#10B981" },
@@ -39,31 +33,54 @@ const CATEGORY_META = {
   Others: { icon: "💰", color: "#64748B" },
 };
 
-function getCategoryIcon(cat) { return (CATEGORY_META[cat] || CATEGORY_META.Others).icon; }
-function getCategoryColor(cat) { return (CATEGORY_META[cat] || CATEGORY_META.Others).color; }
+const AMOUNT_PATTERNS = [
+  /(?:₹|rs\.?|inr|rupees?)\s*([\d,]+(?:\.\d{1,2})?)/i,
+  /(?:paid|received|sent|debited|credited|collected|payment of|amount of)\s+(?:₹|rs\.?|inr)?\s*([\d,]+(?:\.\d{1,2})?)/i,
+  /\b([\d,]+(?:\.\d{1,2})?)\s*(?:rs|inr)\b/i,
+];
 
-// ---------------------------------------------------------------------------
-// Enhanced Parser
-// ---------------------------------------------------------------------------
+const NAME_STOP = /\b(via|using|on|for|rs\.?|inr|upi|you|your|has|was|is|paid|received|sent|debited|credited|collected|payment|amount|transaction|bank|a\/c|ac|account|ref|txn|id|no|number|at|with|through|by|the|successful|success|completed|done|rupees?)\b/i;
+
+const CATEGORY_RULES = [
+  { category: "Fuel", keywords: ["petrol", "diesel", "fuel", "indianoil", "bharat petroleum", "bpcl", "hpcl", "ioc", "shell", "nayara", "pump", "filling station", "hindustan petroleum"] },
+  { category: "Groceries", keywords: ["blinkit", "zepto", "instamart", "bigbasket", "dmart", "reliance fresh", "grocery", "grocers", "supermarket", "kirana", "mart", "spencer", "more retail"] },
+  { category: "Food", keywords: ["zomato", "swiggy", "dominos", "pizza", "starbucks", "restaurant", "cafe", "eatclub", "burger", "biryani", "bakery", "tea", "chai", "subway", "mcdonald", "kfc"] },
+  { category: "Bills", keywords: ["jio", "airtel", "vi", "vodafone", "bsnl", "recharge", "postpaid", "prepaid", "broadband", "electricity", "electric", "water bill", "gas bill", "wifi", "internet", "dth", "tata play", "fastag", "bescom", "mseb", "torrent power", "billdesk"] },
+  { category: "Transport", keywords: ["uber", "ola", "rapido", "metro", "cab", "taxi", "auto", "rickshaw", "namma yatri", "blusmart", "indrive", "parking", "toll"] },
+  { category: "Travel", keywords: ["irctc", "makemytrip", "goibibo", "airbnb", "oyo", "flight", "train", "rail", "hotel", "booking", "redbus", "abhibus", "cleartrip", "ticket"] },
+  { category: "Entertainment", keywords: ["netflix", "spotify", "prime video", "amazon prime", "bookmyshow", "hotstar", "disney", "youtube premium", "sony liv", "zee5", "movie", "cinema", "game", "steam"] },
+  { category: "Health", keywords: ["apollo", "netmeds", "pharmeasy", "1mg", "medical", "hospital", "clinic", "doctor", "diagnostics", "lab", "medicine"] },
+  { category: "Education", keywords: ["school", "college", "university", "course", "udemy", "coursera", "academy", "tuition", "fee"] },
+  { category: "Investments", keywords: ["zerodha", "groww", "upstox", "mutual fund", "sip", "insurance", "policy", "lic", "premium", "coin", "kuvera", "indmoney", "stock"] },
+  { category: "Shopping", keywords: ["amazon", "flipkart", "myntra", "ajio", "meesho", "nykaa", "croma", "decathlon", "reliance digital", "zara", "hm", "h&m", "shopping", "store"] },
+];
+
+function getCategoryIcon(cat) {
+  return (CATEGORY_META[cat] || CATEGORY_META.Others).icon;
+}
+
+function getCategoryColor(cat) {
+  return (CATEGORY_META[cat] || CATEGORY_META.Others).color;
+}
+
+function normalizeText(text = "") {
+  return text
+    .toLowerCase()
+    .replace(/[|,:;()[\]{}_*#]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeAmount(text = "") {
-  const patterns = [
-    /₹\s*([\d,]+(?:\.\d{1,2})?)/,
-    /Rs\.?\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /INR\.?\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /Rupees?\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /(?:paid|received|sent|debited|credited|collected|of)\s+(?:Rs\.?|₹|INR)?\s*([\d,]+(?:\.\d{1,2})?)/i,
-  ];
-  for (const regex of patterns) {
-    const m = text.match(regex);
-    if (m && m[1]) {
-      const num = Number(m[1].replace(/,/g, ""));
+  for (const regex of AMOUNT_PATTERNS) {
+    const match = text.match(regex);
+    if (match && match[1]) {
+      const num = Number(match[1].replace(/,/g, ""));
       if (num > 0) return num;
     }
   }
   return 0;
 }
-
-const NAME_STOP = /\b(via|using|on|for|rs\.?|inr|upi|you|your|has|was|is|paid|received|sent|debited|credited|collected|payment|amount|transaction|bank|a\/c|ac|account|ref|txn|id|no|number|at|with|through|by|the|successful|success|completed|done|rupees?)\b/i;
 
 function extractName(text = "") {
   const patterns = [
@@ -73,17 +90,14 @@ function extractName(text = "") {
     /\bdebited\s+(?:to|for)\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
     /\bsent\s+to\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
     /\bcollected\s+from\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
-    /\bto\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
-    /\bfrom\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
-    /\bat\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
-    /\bbeneficiary\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
     /\bmerchant\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
+    /\bbeneficiary\s+([A-Z][A-Za-z0-9&.'\- ]{1,40})/i,
   ];
 
   for (const regex of patterns) {
-    const m = text.match(regex);
-    if (m && m[1]) {
-      let name = m[1].trim();
+    const match = text.match(regex);
+    if (match && match[1]) {
+      let name = match[1].trim();
       const stop = name.match(NAME_STOP);
       if (stop && stop.index !== undefined && stop.index > 0) {
         name = name.substring(0, stop.index).trim();
@@ -92,36 +106,53 @@ function extractName(text = "") {
       if (name.length > 1) return name;
     }
   }
+
   return "";
 }
 
-function detectDirection(text = "") {
-  const l = text.toLowerCase();
-  const creditWords = /(received|credited|money received|collected|has sent you|refund|cashback)/;
-  const debitWords = /(paid|sent|debited|payment of|spent|charged|deducted|purchase)/;
+function cleanDisplayName(name = "") {
+  return name
+    .replace(/\b(?:upi|txn|transaction|ref|bank|payment|successful|success|debited|credited|received|paid)\b/gi, " ")
+    .replace(/[|,:;()[\]{}_*#]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  if (creditWords.test(l) && !debitWords.test(l)) return "credit";
-  if (debitWords.test(l)) return "debit";
-  if (/\bfrom\b/.test(l) && !/\bto\b/.test(l)) return "credit";
+function detectDirection(text = "") {
+  const normalized = normalizeText(text);
+  const creditWords = /(received|credited|money received|collected|has sent you|refund|cashback|deposited)/;
+  const debitWords = /(paid|sent|debited|payment of|spent|charged|deducted|purchase|recharge done|bill paid)/;
+
+  if (creditWords.test(normalized) && !debitWords.test(normalized)) return "credit";
+  if (debitWords.test(normalized)) return "debit";
+  if (/\bfrom\b/.test(normalized) && !/\bto\b/.test(normalized)) return "credit";
   return "debit";
 }
 
 function detectCategory(name = "", body = "") {
-  const t = `${name} ${body}`.toLowerCase();
-  
-  if (/\b(blinkit|zepto|instamart|bigbasket|dmart|spencer|reliance fresh|milk|dairy|grocery|supermarket|mart|kirana)\b/.test(t)) return "Groceries";
-  if (/\b(zomato|swiggy|domino|pizza|starbucks|cafe|restaurant|food|mcdonald|subway|burger|kitchen|biryani|chai|tea|bakery|dhaba|eats)\b/.test(t)) return "Food";
-  if (/\b(jio|airtel|mseb|bescom|electric|bill|recharge|postpaid|prepaid|broadband|wifi|internet|gas|water|electricity|vi|vodafone|bsnl|dth|tata play|tata sky)\b/.test(t)) return "Bills";
-  if (/\b(petrol|fuel|indianoil|bharat petroleum|bpcl|hpcl|pump|diesel|cng|filling station|indian oil|reliance petroleum|shell|nayara)\b/.test(t)) return "Fuel";
-  if (/\b(amazon|flipkart|myntra|shopping|store|decathlon|ajio|meesho|nykaa|croma|reliance digital|tata cliq|lifestyle|pantaloon|trends|zara|h&m)\b/.test(t)) return "Shopping";
-  if (/\b(uber|ola|rapido|metro|cab|ride|transport|auto|rickshaw|taxi|namma yatri|blusmart|indrive)\b/.test(t)) return "Transport";
-  if (/\b(flight|travel|rail|train|hotel|irctc|makemytrip|goibibo|booking|airbnb|oyo|redbus|abhibus|yatra|cleartrip|ticket)\b/.test(t)) return "Travel";
-  if (/\b(pvr|bookmyshow|netflix|spotify|movie|cinema|prime|hotstar|disney|youtube|gaming|game|inox|cinepolis|sony liv|zee5|steam|playstation|xbox|pubg|bgmi)\b/.test(t)) return "Entertainment";
-  if (/\b(pharmacy|medical|hospital|clinic|apollo|netmeds|pharmeasy|1mg|doctor|wellness|health|diagnostics|lab|medicine)\b/.test(t)) return "Health";
-  if (/\b(school|college|tuition|university|course|udemy|coursera|library|fee|education|academy|institute)\b/.test(t)) return "Education";
-  if (/\b(zerodha|groww|upstox|angel|mutual fund|sip|lic|insurance|premium|policy|coin|kuvera|indmoney|wazirx|binance|crypto|stock)\b/.test(t)) return "Investments";
-  
-  return "Person Transfer";
+  const haystack = normalizeText(`${name} ${body}`);
+  let winner = { category: "Person Transfer", score: 0 };
+
+  for (const rule of CATEGORY_RULES) {
+    let score = 0;
+    for (const keyword of rule.keywords) {
+      if (haystack.includes(keyword)) {
+        score += keyword.length > 6 ? 3 : 2;
+      }
+    }
+    if (score > winner.score) {
+      winner = { category: rule.category, score };
+    }
+  }
+
+  if (winner.score === 0) {
+    if (/\b(bank|upi|transfer|beneficiary|sent to|received from)\b/.test(haystack)) {
+      return "Person Transfer";
+    }
+    return "Others";
+  }
+
+  return winner.category;
 }
 
 function applyAlias(name, aliases = {}) {
@@ -129,45 +160,187 @@ function applyAlias(name, aliases = {}) {
   return aliases[key] || name;
 }
 
-function parseNotification(payload, aliases = {}) {
-  const title = payload.title || "";
-  const text = payload.text || "";
-  const appName = payload.appName || "";
+function classifyTransactionFields(payload = {}, aliases = {}) {
+  const title = payload.title || payload.rawTitle || "";
+  const text = payload.text || payload.rawText || "";
+  const appName = payload.appName || payload.sourceApp || "";
   const upiId = payload.upiId || "";
-
   const combined = `${title} ${text}`.trim();
-  const amount = normalizeAmount(combined);
+  const amount = normalizeAmount(combined) || Number(payload.amount || 0);
   const direction = detectDirection(combined);
 
-  let rawName =
+  const rawName = cleanDisplayName(
     payload.payeeName ||
-    extractName(title) ||
-    extractName(text) ||
-    extractName(combined) ||
-    title ||
-    "Unknown";
+      payload.rawName ||
+      extractName(title) ||
+      extractName(text) ||
+      extractName(combined) ||
+      title ||
+      "Unknown"
+  ) || "Unknown";
 
-  const displayName = applyAlias(rawName, aliases);
-  const category = direction === "credit" ? "Money Received" : detectCategory(displayName, combined);
+  const name = applyAlias(rawName, aliases);
+  const category = direction === "credit" ? "Money Received" : detectCategory(name, combined);
 
-  return { sourceApp: appName, rawTitle: title, rawText: text, upiId, amount, direction, rawName, name: displayName, category };
+  return {
+    sourceApp: appName,
+    rawTitle: title,
+    rawText: text,
+    upiId,
+    amount,
+    direction,
+    rawName,
+    name,
+    category,
+    icon: getCategoryIcon(category),
+    color: getCategoryColor(category),
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Middlewares / Helpers
-// ---------------------------------------------------------------------------
-app.get("/health", (_req, res) => res.json({ ok: true }));
+function parseNotification(payload, aliases = {}) {
+  return classifyTransactionFields(payload, aliases);
+}
+
+function buildSubscriptions(tx) {
+  const debitMap = {};
+  for (const item of tx) {
+    if (item.direction !== "debit") continue;
+    const key = item.name.toLowerCase();
+    if (!debitMap[key]) debitMap[key] = [];
+    debitMap[key].push({ d: new Date(item.createdAt), a: item.amount, i: item.icon });
+  }
+
+  const subscriptions = [];
+  for (const [name, instances] of Object.entries(debitMap)) {
+    if (instances.length < 2) continue;
+    const months = new Set(instances.map(inst => `${inst.d.getMonth()}-${inst.d.getFullYear()}`));
+    if (months.size >= 2) {
+      const avg = instances.reduce((sum, inst) => sum + inst.a, 0) / instances.length;
+      const sortedDates = instances.map(inst => inst.d).sort((a, b) => a - b);
+      const lastDate = sortedDates[sortedDates.length - 1];
+      const previousDate = sortedDates[sortedDates.length - 2];
+      const diffDays = Math.max(1, Math.round((lastDate - previousDate) / (1000 * 60 * 60 * 24)));
+      const nextRenewal = new Date(lastDate);
+      nextRenewal.setDate(nextRenewal.getDate() + diffDays);
+      const variation = instances.reduce((sum, inst) => sum + Math.abs(inst.a - avg), 0) / instances.length;
+      const confidence = Math.max(0.35, Math.min(0.99, 1 - (variation / Math.max(avg, 1))));
+      subscriptions.push({
+        name: name.charAt(0).toUpperCase() + name.slice(1),
+        avgAmount: Math.round(avg),
+        count: instances.length,
+        icon: instances[0].icon,
+        nextRenewal: nextRenewal.toISOString(),
+        confidence: Number(confidence.toFixed(2)),
+        monthlyWaste: Math.round(avg),
+      });
+    }
+  }
+
+  return subscriptions.sort((a, b) => b.avgAmount - a.avgAmount);
+}
+
+function buildSeries(tx) {
+  const monthlyMap = {};
+  const yearlyMap = {};
+
+  tx.forEach(item => {
+    const date = new Date(item.createdAt);
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    const yearKey = String(date.getFullYear());
+
+    if (!monthlyMap[monthKey]) monthlyMap[monthKey] = { label: monthKey, spent: 0, received: 0 };
+    if (!yearlyMap[yearKey]) yearlyMap[yearKey] = { label: yearKey, spent: 0, received: 0 };
+
+    if (item.direction === "debit") {
+      monthlyMap[monthKey].spent += item.amount;
+      yearlyMap[yearKey].spent += item.amount;
+    } else {
+      monthlyMap[monthKey].received += item.amount;
+      yearlyMap[yearKey].received += item.amount;
+    }
+  });
+
+  return {
+    monthlySeries: Object.values(monthlyMap).sort((a, b) => a.label.localeCompare(b.label)),
+    yearlySeries: Object.values(yearlyMap).sort((a, b) => a.label.localeCompare(b.label)),
+  };
+}
+
+function buildMerchantStats(tx) {
+  const merchantMap = {};
+  tx.forEach(item => {
+    const key = item.name.toLowerCase();
+    if (!merchantMap[key]) {
+      merchantMap[key] = {
+        name: item.name,
+        count: 0,
+        total: 0,
+        category: item.category,
+        icon: item.icon,
+      };
+    }
+    merchantMap[key].count += 1;
+    merchantMap[key].total += item.amount;
+  });
+
+  return Object.values(merchantMap)
+    .sort((a, b) => (b.total === a.total ? b.count - a.count : b.total - a.total))
+    .slice(0, 10);
+}
+
+function buildSmartAlerts({ budget = 0, spent = 0, tx = [], categoryTotals = {}, subscriptions = [] }) {
+  const alerts = [];
+  if (budget > 0) {
+    const used = Math.round((spent / budget) * 100);
+    if (used >= 100) {
+      alerts.push({ title: "Budget exceeded", body: `You have crossed your budget by Rs ${Math.max(0, spent - budget).toLocaleString("en-IN")}.`, severity: "danger" });
+    } else if (used >= 85) {
+      alerts.push({ title: "Budget warning", body: `${used}% of this month's budget is already used.`, severity: "warning" });
+    }
+  }
+
+  const foodSpend = categoryTotals.Food || 0;
+  if (foodSpend > 0 && spent > 0 && foodSpend / spent > 0.28) {
+    alerts.push({ title: "Food spend spike", body: `Food accounts for ${Math.round((foodSpend / spent) * 100)}% of your debit spend.`, severity: "info" });
+  }
+
+  const now = Date.now();
+  subscriptions.slice(0, 3).forEach(sub => {
+    if (!sub.nextRenewal) return;
+    const daysAway = Math.round((new Date(sub.nextRenewal).getTime() - now) / (1000 * 60 * 60 * 24));
+    if (daysAway >= 0 && daysAway <= 5) {
+      alerts.push({ title: "Renewal coming up", body: `${sub.name} is likely due in ${daysAway} day${daysAway === 1 ? "" : "s"}.`, severity: "warning" });
+    }
+  });
+
+  if (tx.length > 1) {
+    const latest = tx.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+    if (latest.direction === "debit" && latest.amount > Math.max(1500, spent * 0.18)) {
+      alerts.push({ title: "Unusual spend", body: `${latest.name} at Rs ${latest.amount.toLocaleString("en-IN")} is larger than your usual recent pattern.`, severity: "info" });
+    }
+  }
+
+  return alerts.slice(0, 5);
+}
 
 async function getUserDoc() {
-  const d = await db.collection("users").doc("me").get();
-  return d.exists ? d.data() : null;
+  const doc = await db.collection("users").doc("me").get();
+  return doc.exists ? doc.data() : null;
 }
 
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
+async function commitInChunks(mutator) {
+  const refs = [];
+  await mutator(refs);
+  for (let index = 0; index < refs.length; index += 400) {
+    const batch = db.batch();
+    refs.slice(index, index + 400).forEach(fn => fn(batch));
+    await batch.commit();
+  }
+}
 
-app.get("/api/user", async (req, res) => {
+app.get("/health", (_req, res) => res.json({ ok: true }));
+
+app.get("/api/user", async (_req, res) => {
   try {
     const user = await getUserDoc();
     res.json({ success: true, data: user });
@@ -187,7 +360,7 @@ app.post("/api/user", async (req, res) => {
     const isNew = !current;
 
     const dataObj = {
-      id: isNew ? "u_" + Date.now() : current.id,
+      id: isNew ? `u_${Date.now()}` : current.id,
       name: name.trim(),
       upiId: upiId.trim(),
       balance: isNew ? 0 : current.balance,
@@ -205,18 +378,18 @@ app.post("/api/user", async (req, res) => {
   }
 });
 
-app.delete("/api/user/reset", async (req, res) => {
+app.delete("/api/user/reset", async (_req, res) => {
   try {
-    const batch = db.batch();
-    const collections = ["transactions", "notifications", "ledger"];
-    for (const c of collections) {
-      const snap = await db.collection(c).get();
-      snap.docs.forEach(d => batch.delete(d.ref));
-    }
-    // Also reset main balance
-    batch.update(db.collection("users").doc("me"), { balance: 0 });
-    await batch.commit();
-    res.json({ success: true });
+    const collections = ["transactions", "notifications", "ledger", "raw_notifications"];
+    await commitInChunks(async refs => {
+      for (const collection of collections) {
+        const snapshot = await db.collection(collection).get();
+        snapshot.docs.forEach(doc => refs.push(batch => batch.delete(doc.ref)));
+      }
+      refs.push(batch => batch.set(db.collection("users").doc("me"), { balance: 0 }, { merge: true }));
+    });
+
+    res.json({ success: true, data: { reset: true } });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -224,8 +397,38 @@ app.delete("/api/user/reset", async (req, res) => {
 
 app.get("/api/transactions", async (_req, res) => {
   try {
-    const s = await db.collection("transactions").orderBy("createdAt", "desc").get();
-    res.json({ success: true, data: s.docs.map(d => d.data()) });
+    const snapshot = await db.collection("transactions").orderBy("createdAt", "desc").get();
+    res.json({ success: true, data: snapshot.docs.map(doc => doc.data()) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.post("/api/transactions/reclassify", async (_req, res) => {
+  try {
+    const userDoc = await getUserDoc();
+    const aliases = userDoc?.aliases || {};
+    const snapshot = await db.collection("transactions").get();
+    let updated = 0;
+
+    await commitInChunks(async refs => {
+      snapshot.docs.forEach(doc => {
+        const current = doc.data();
+        const classified = classifyTransactionFields(current, aliases);
+        refs.push(batch => batch.update(doc.ref, {
+          name: classified.name,
+          rawName: classified.rawName,
+          category: classified.category,
+          icon: classified.icon,
+          color: classified.color,
+          direction: current.direction || classified.direction,
+          amount: current.amount || classified.amount,
+        }));
+        updated += 1;
+      });
+    });
+
+    res.json({ success: true, data: { updated } });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -233,8 +436,8 @@ app.get("/api/transactions", async (_req, res) => {
 
 app.get("/api/notifications", async (_req, res) => {
   try {
-    const s = await db.collection("notifications").orderBy("createdAt", "desc").get();
-    res.json({ success: true, data: s.docs.map(d => d.data()) });
+    const snapshot = await db.collection("notifications").orderBy("createdAt", "desc").get();
+    res.json({ success: true, data: snapshot.docs.map(doc => doc.data()) });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -242,47 +445,39 @@ app.get("/api/notifications", async (_req, res) => {
 
 app.get("/api/summary", async (_req, res) => {
   try {
-    const [userDoc, txSnap, lgrSnap] = await Promise.all([
+    const [userDoc, txSnap, ledgerSnap] = await Promise.all([
       getUserDoc(),
       db.collection("transactions").get(),
       db.collection("ledger").where("settled", "==", false).get(),
     ]);
 
-    const tx = txSnap.docs.map(d => d.data());
-    const spent = tx.filter(t => t.direction === "debit").reduce((s, t) => s + t.amount, 0);
-    const received = tx.filter(t => t.direction === "credit").reduce((s, t) => s + t.amount, 0);
+    const tx = txSnap.docs.map(doc => doc.data());
+    const spent = tx.filter(item => item.direction === "debit").reduce((sum, item) => sum + item.amount, 0);
+    const received = tx.filter(item => item.direction === "credit").reduce((sum, item) => sum + item.amount, 0);
 
     const categoryTotals = {};
     for (const item of tx) {
       if (item.direction !== "debit") continue;
       categoryTotals[item.category] = (categoryTotals[item.category] || 0) + item.amount;
     }
+
     const topCategory = Object.keys(categoryTotals).length
-      ? Object.keys(categoryTotals).reduce((a, b) => (categoryTotals[a] > categoryTotals[b] ? a : b)) : "None";
+      ? Object.keys(categoryTotals).reduce((a, b) => (categoryTotals[a] > categoryTotals[b] ? a : b))
+      : "None";
 
-    const ledger = lgrSnap.docs.map(d => d.data());
-    const totalLent = ledger.filter(e => e.type === "lent").reduce((s, e) => s + e.amount, 0);
-    const totalBorrowed = ledger.filter(e => e.type === "borrowed").reduce((s, e) => s + e.amount, 0);
-
-    // Smart Subscription Detection
-    const debitMap = {};
-    for (const t of tx) {
-      if (t.direction !== "debit") continue;
-      const key = t.name.toLowerCase();
-      if (!debitMap[key]) debitMap[key] = [];
-      debitMap[key].push({ d: new Date(t.createdAt), a: t.amount, i: t.icon });
-    }
-
-    const subscriptions = [];
-    for (const [name, instances] of Object.entries(debitMap)) {
-      if (instances.length < 2) continue;
-      // Simple heuristic: Same name, similar amount, different months
-      const months = new Set(instances.map(inst => `${inst.d.getMonth()}-${inst.d.getFullYear()}`));
-      if (months.size >= 2) {
-        const avg = instances.reduce((s, i) => s + i.a, 0) / instances.length;
-        subscriptions.push({ name: name.charAt(0).toUpperCase() + name.slice(1), avgAmount: Math.round(avg), count: instances.length, icon: instances[0].icon });
-      }
-    }
+    const ledger = ledgerSnap.docs.map(doc => doc.data());
+    const totalLent = ledger.filter(entry => entry.type === "lent").reduce((sum, entry) => sum + entry.amount, 0);
+    const totalBorrowed = ledger.filter(entry => entry.type === "borrowed").reduce((sum, entry) => sum + entry.amount, 0);
+    const subscriptions = buildSubscriptions(tx);
+    const { monthlySeries, yearlySeries } = buildSeries(tx);
+    const merchantStats = buildMerchantStats(tx);
+    const smartAlerts = buildSmartAlerts({
+      budget: userDoc ? userDoc.budget : 0,
+      spent,
+      tx,
+      categoryTotals,
+      subscriptions,
+    });
 
     res.json({
       success: true,
@@ -291,9 +486,16 @@ app.get("/api/summary", async (_req, res) => {
         totalReceived: received,
         balance: userDoc ? userDoc.balance : 0,
         budget: userDoc ? userDoc.budget : 0,
-        topCategory, count: tx.length, categoryTotals,
-        totalLent, totalBorrowed,
+        topCategory,
+        count: tx.length,
+        categoryTotals,
+        totalLent,
+        totalBorrowed,
         subscriptions,
+        smartAlerts,
+        merchantStats,
+        monthlySeries,
+        yearlySeries,
       },
     });
   } catch (e) {
@@ -308,134 +510,196 @@ app.post("/api/ingest-notification", async (req, res) => {
       return res.status(400).json({ success: false, error: "User onboarding not completed" });
     }
 
-    const parsed = parseNotification(req.body || {}, userDoc.aliases || {});
+    const payload = req.body || {};
+    const rawId = `RAW${Date.now()}`;
+    await db.collection("raw_notifications").doc(rawId).set({
+      ...payload,
+      createdAt: new Date().toISOString(),
+    });
+
+    const parsed = parseNotification(payload, userDoc.aliases || {});
     if (!parsed.amount || parsed.amount <= 0) {
-      return res.status(400).json({ success: false, error: "Could not detect amount from notification" });
+      return res.status(200).json({ success: true, data: null });
     }
 
     const tx = {
-      id: "TX" + Date.now(),
-      name: parsed.name, rawName: parsed.rawName, upiId: parsed.upiId || "", amount: parsed.amount,
-      category: parsed.category, direction: parsed.direction, sourceApp: parsed.sourceApp,
-      icon: getCategoryIcon(parsed.category), color: getCategoryColor(parsed.category),
-      rawTitle: parsed.rawTitle, rawText: parsed.rawText, createdAt: new Date().toISOString(),
+      id: `TX${Date.now()}`,
+      name: parsed.name,
+      rawName: parsed.rawName,
+      upiId: parsed.upiId || "",
+      amount: parsed.amount,
+      category: parsed.category,
+      direction: parsed.direction,
+      sourceApp: parsed.sourceApp,
+      icon: parsed.icon,
+      color: parsed.color,
+      rawTitle: parsed.rawTitle,
+      rawText: parsed.rawText,
+      createdAt: new Date().toISOString(),
     };
 
-    let newBalance = userDoc.balance;
-    if (parsed.direction === "debit") newBalance -= parsed.amount;
-    else newBalance += parsed.amount;
+    const newBalance = parsed.direction === "debit"
+      ? userDoc.balance - parsed.amount
+      : userDoc.balance + parsed.amount;
 
-    const nf = {
-      id: "NF" + Date.now(),
-      title: parsed.direction === "credit" ? `Received ₹${parsed.amount} from ${parsed.name}` : `Paid ₹${parsed.amount} to ${parsed.name}`,
-      body: `${parsed.category} • ${parsed.sourceApp}`,
-      txId: tx.id, createdAt: new Date().toISOString(),
+    const notification = {
+      id: `NF${Date.now()}`,
+      title: parsed.direction === "credit" ? `Received Rs ${parsed.amount} from ${parsed.name}` : `Paid Rs ${parsed.amount} to ${parsed.name}`,
+      body: `${parsed.category} | ${parsed.sourceApp}`,
+      txId: tx.id,
+      createdAt: new Date().toISOString(),
     };
 
     const batch = db.batch();
     batch.set(db.collection("users").doc("me"), { balance: newBalance }, { merge: true });
     batch.set(db.collection("transactions").doc(tx.id), tx);
-    batch.set(db.collection("notifications").doc(nf.id), nf);
+    batch.set(db.collection("notifications").doc(notification.id), notification);
     await batch.commit();
 
-    res.json({ success: true, data: { transaction: tx, notification: nf } });
+    res.json({ success: true, data: { transaction: tx, notification } });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ---- Aliases ----
 app.get("/api/aliases", async (_req, res) => {
-  const d = await getUserDoc();
-  res.json({ success: true, data: d ? d.aliases || {} : {} });
+  const userDoc = await getUserDoc();
+  res.json({ success: true, data: userDoc ? userDoc.aliases || {} : {} });
 });
 
 app.post("/api/alias", async (req, res) => {
   try {
     const { originalName, alias } = req.body || {};
-    if (!originalName || !alias) return res.status(400).json({ success: false, error: "originalName and alias required" });
-    
-    // Set in UserDoc
-    const key = originalName.toLowerCase();
-    await db.collection("users").doc("me").set({ aliases: { [key]: alias } }, { merge: true });
+    if (!originalName || !alias) {
+      return res.status(400).json({ success: false, error: "originalName and alias required" });
+    }
 
-    // Update existing transactions safely via batch matching
-    const txSnap = await db.collection("transactions").get();
-    const batch = db.batch();
-    txSnap.docs.forEach(d => {
-      const tx = d.data();
-      if (tx.rawName && tx.rawName.toLowerCase() === key) batch.update(d.ref, { name: alias });
+    const key = originalName.toLowerCase();
+    const userDoc = await getUserDoc();
+    const aliases = { ...(userDoc?.aliases || {}), [key]: alias };
+    await db.collection("users").doc("me").set({ aliases }, { merge: true });
+
+    const snapshot = await db.collection("transactions").get();
+    await commitInChunks(async refs => {
+      snapshot.docs.forEach(doc => {
+        const tx = doc.data();
+        if (tx.rawName && tx.rawName.toLowerCase() === key) {
+          refs.push(batch => batch.update(doc.ref, { name: alias }));
+        }
+      });
     });
-    await batch.commit(); // Could exceed 500 limits for massive users but fine for us
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+
+    res.json({ success: true, data: { saved: true } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 app.delete("/api/alias/:name", async (req, res) => {
   try {
     const key = decodeURIComponent(req.params.name).toLowerCase();
     await db.collection("users").doc("me").update({ [`aliases.${key}`]: admin.firestore.FieldValue.delete() });
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    res.json({ success: true, data: { deleted: true } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-// ---- Contacts ----
 app.post("/api/contacts", async (req, res) => {
   try {
     const { contacts } = req.body || {};
-    if (!contacts) return res.status(400).json({ success: false, error: "contacts required" });
+    if (!contacts) {
+      return res.status(400).json({ success: false, error: "contacts required" });
+    }
     await db.collection("users").doc("me").set({ contacts }, { merge: true });
-    res.json({ success: true, count: Object.keys(contacts).length });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
-});
-app.get("/api/contacts", async (_req, res) => {
-  const d = await getUserDoc(); res.json({ success: true, data: d ? d.contacts || {} : {} });
+    res.json({ success: true, data: { count: Object.keys(contacts).length } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-// ---- Ledger ----
+app.get("/api/contacts", async (_req, res) => {
+  const userDoc = await getUserDoc();
+  res.json({ success: true, data: userDoc ? userDoc.contacts || {} : {} });
+});
+
 app.get("/api/ledger", async (_req, res) => {
   try {
-    const s = await db.collection("ledger").orderBy("createdAt", "desc").get();
-    res.json({ success: true, data: s.docs.map(d => d.data()) });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    const snapshot = await db.collection("ledger").orderBy("createdAt", "desc").get();
+    res.json({ success: true, data: snapshot.docs.map(doc => doc.data()) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 app.post("/api/ledger", async (req, res) => {
   try {
     const { personName, amount, type, note } = req.body || {};
-    if (!personName || !amount || !type) return res.status(400).json({ success: false, error: "personName, amount, type required" });
+    if (!personName || !amount || !type) {
+      return res.status(400).json({ success: false, error: "personName, amount, type required" });
+    }
 
     const entry = {
-      id: "LD" + Date.now(), personName: personName.trim(), amount: Number(amount), type,
-      note: (note || "").trim(), settled: false, createdAt: new Date().toISOString(), settledAt: null,
+      id: `LD${Date.now()}`,
+      personName: personName.trim(),
+      amount: Number(amount),
+      type,
+      note: (note || "").trim(),
+      settled: false,
+      createdAt: new Date().toISOString(),
+      settledAt: null,
     };
+
     await db.collection("ledger").doc(entry.id).set(entry);
     res.json({ success: true, data: entry });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 app.put("/api/ledger/:id", async (req, res) => {
   try {
-    const dRef = db.collection("ledger").doc(req.params.id);
-    const d = await dRef.get();
-    if (!d.exists) return res.status(404).json({ success: false, error: "Ledger entry not found" });
+    const ref = db.collection("ledger").doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, error: "Ledger entry not found" });
+    }
 
     const { settled, personName, amount, note } = req.body || {};
     const updates = {};
-    if (settled !== undefined) { updates.settled = Boolean(settled); updates.settledAt = updates.settled ? new Date().toISOString() : null; }
+
+    if (settled !== undefined) {
+      updates.settled = Boolean(settled);
+      updates.settledAt = updates.settled ? new Date().toISOString() : null;
+    }
     if (personName) updates.personName = personName.trim();
     if (amount) updates.amount = Number(amount);
     if (note !== undefined) updates.note = note.trim();
 
-    await dRef.update(updates);
-    const updated = await dRef.get();
+    await ref.update(updates);
+    const updated = await ref.get();
     res.json({ success: true, data: updated.data() });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 app.delete("/api/ledger/:id", async (req, res) => {
-  try { await db.collection("ledger").doc(req.params.id).delete(); res.json({ success: true }); }
-  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  try {
+    await db.collection("ledger").doc(req.params.id).delete();
+    res.json({ success: true, data: { deleted: true } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.get("/api/raw-notifications", async (_req, res) => {
+  try {
+    const snapshot = await db.collection("raw_notifications").orderBy("createdAt", "desc").limit(100).get();
+    res.json({ success: true, data: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 app.listen(PORT, () => console.log(`FlowLedger backend deployed to FireBase! On Port: ${PORT}`));
