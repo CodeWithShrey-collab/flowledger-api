@@ -118,6 +118,39 @@ function cleanDisplayName(name = "") {
     .trim();
 }
 
+function normalizeSourceApp(appName = "") {
+  const normalized = appName.toLowerCase();
+  if (normalized.includes("com.android.mms") || normalized.includes("messaging") || normalized.includes("messages")) {
+    return "SMS Alerts";
+  }
+  if (normalized.includes("phonepe")) return "PhonePe";
+  if (normalized.includes("paytm")) return "Paytm";
+  if (normalized.includes("google") || normalized.includes("paisa")) return "GPay";
+  return appName;
+}
+
+function isLikelyPersonName(name = "") {
+  const cleaned = cleanDisplayName(name);
+  if (!cleaned) return false;
+  const normalized = cleaned.toLowerCase();
+  if (normalized.length < 3) return false;
+  if (/\d/.test(normalized)) return false;
+  if (/(recharge|bill|electric|petrol|fuel|airtel|jio|vodafone|bsnl|uber|ola|zomato|swiggy|blinkit|zepto|paytm|phonepe|gpay|bank|store|mart|market|restaurant|hotel|insurance|hospital)/.test(normalized)) {
+    return false;
+  }
+
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  const titleCaseParts = parts.filter(part => /^[A-Z][a-z'.-]+$/.test(part));
+  return parts.length >= 2 || titleCaseParts.length >= 1;
+}
+
+function isPersonTransferContext(text = "", name = "") {
+  const haystack = normalizeText(text);
+  const hasP2PVerb = /(to|from|beneficiary|transferred to|sent to|paid to|received from|collected from)/.test(haystack);
+  const hasMerchantSignal = /(recharge|electricity|billdesk|broadband|wifi|gas bill|water bill|petrol|fuel|zomato|swiggy|blinkit|zepto|uber|ola|netflix|spotify|amazon|flipkart)/.test(haystack);
+  return isLikelyPersonName(name) && hasP2PVerb && !hasMerchantSignal;
+}
+
 function detectDirection(text = "") {
   const normalized = normalizeText(text);
   const creditWords = /(received|credited|money received|collected|has sent you|refund|cashback|deposited)/;
@@ -131,6 +164,9 @@ function detectDirection(text = "") {
 
 function detectCategory(name = "", body = "") {
   const haystack = normalizeText(`${name} ${body}`);
+  if (isPersonTransferContext(body, name)) {
+    return "Person Transfer";
+  }
   let winner = { category: "Person Transfer", score: 0 };
 
   for (const rule of CATEGORY_RULES) {
@@ -163,7 +199,7 @@ function applyAlias(name, aliases = {}) {
 function classifyTransactionFields(payload = {}, aliases = {}) {
   const title = payload.title || payload.rawTitle || "";
   const text = payload.text || payload.rawText || "";
-  const appName = payload.appName || payload.sourceApp || "";
+  const appName = normalizeSourceApp(payload.appName || payload.sourceApp || "");
   const upiId = payload.upiId || "";
   const combined = `${title} ${text}`.trim();
   const amount = normalizeAmount(combined) || Number(payload.amount || 0);
@@ -180,7 +216,11 @@ function classifyTransactionFields(payload = {}, aliases = {}) {
   ) || "Unknown";
 
   const name = applyAlias(rawName, aliases);
-  const category = direction === "credit" ? "Money Received" : detectCategory(name, combined);
+  const category = direction === "credit"
+    ? "Money Received"
+    : isPersonTransferContext(combined, name)
+      ? "Person Transfer"
+      : detectCategory(name, combined);
 
   return {
     sourceApp: appName,
