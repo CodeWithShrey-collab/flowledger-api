@@ -363,6 +363,16 @@ function buildSmartAlerts({ budget = 0, spent = 0, tx = [], categoryTotals = {},
   return alerts.slice(0, 5);
 }
 
+function buildStableId(value = "") {
+  const input = String(value || "");
+  let hash = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(index);
+    hash |= 0;
+  }
+  return `EV${Math.abs(hash)}`;
+}
+
 async function getUserDoc() {
   const doc = await db.collection("users").doc("me").get();
   return doc.exists ? doc.data() : null;
@@ -545,58 +555,115 @@ app.get("/api/summary", async (_req, res) => {
 
 app.post("/api/ingest-notification", async (req, res) => {
   try {
-    const userDoc = await getUserDoc();
-    if (!userDoc) {
-      return res.status(400).json({ success: false, error: "User onboarding not completed" });
-    }
-
     const payload = req.body || {};
-    const rawId = `RAW${Date.now()}`;
-    await db.collection("raw_notifications").doc(rawId).set({
-      ...payload,
-      createdAt: new Date().toISOString(),
+    const eventId = buildStableId(
+      payload.eventId ||
+      `${payload.appName || ""}|${payload.packageName || ""}|${payload.postTime || ""}|${payload.title || ""}|${payload.text || ""}`
+    );
+    const eventRef = db.collection("ingest_events").doc(eventId);
+    const rawRef = db.collection("raw_notifications").doc(eventId);
+    const userRef = db.collection("users").doc("me");
+
+    const result = await db.runTransaction(async (txn) => {
+      const [userSnap, eventSnap] = await Promise.all([
+        txn.get(userRef),
+        txn.get(eventRef),
+      ]);
+
+      const userDoc = userSnap.exists ? userSnap.data() : null;
+      if (!userDoc) {
+        throw new Error("User onboarding not completed");
+      }
+
+      if (eventSnap.exists) {
+        const existing = eventSnap.data() || {};
+        return { duplicate: true, txId: existing.txId || null, notificationId: existing.notificationId || null };
+      }
+
+      txn.set(rawRef, {
+        ...payload,
+        eventId,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+
+      const parsed = parseNotification(payload, userDoc.aliases || {});
+      if (!parsed.amount || parsed.amount <= 0) {
+        txn.set(eventRef, {
+          eventId,
+          ignored: true,
+          createdAt: new Date().toISOString(),
+        }, { merge: true });
+        return { duplicate: false, ignored: true };
+      }
+
+      const txId = `TX${Date.now()}`;
+      const tx = {
+        id: txId,
+        eventId,
+        name: parsed.name,
+        rawName: parsed.rawName,
+        upiId: parsed.upiId || "",
+        amount: parsed.amount,
+        category: parsed.category,
+        direction: parsed.direction,
+        sourceApp: parsed.sourceApp,
+        icon: parsed.icon,
+        color: parsed.color,
+        rawTitle: parsed.rawTitle,
+        rawText: parsed.rawText,
+        createdAt: new Date().toISOString(),
+      };
+
+      const newBalance = parsed.direction === "debit"
+        ? (userDoc.balance || 0) - parsed.amount
+        : (userDoc.balance || 0) + parsed.amount;
+
+      const notificationId = `NF${Date.now()}`;
+      const notification = {
+        id: notificationId,
+        eventId,
+        title: parsed.direction === "credit" ? `Received Rs ${parsed.amount} from ${parsed.name}` : `Paid Rs ${parsed.amount} to ${parsed.name}`,
+        body: `${parsed.category} | ${parsed.sourceApp}`,
+        txId,
+        createdAt: new Date().toISOString(),
+      };
+
+      txn.set(userRef, { balance: newBalance }, { merge: true });
+      txn.set(db.collection("transactions").doc(txId), tx);
+      txn.set(db.collection("notifications").doc(notificationId), notification);
+      txn.set(eventRef, {
+        eventId,
+        txId,
+        notificationId,
+        createdAt: new Date().toISOString(),
+      });
+
+      return { duplicate: false, ignored: false, tx, notification };
     });
 
-    const parsed = parseNotification(payload, userDoc.aliases || {});
-    if (!parsed.amount || parsed.amount <= 0) {
+    if (result.duplicate) {
+      if (result.txId && result.notificationId) {
+        const [txSnap, notifSnap] = await Promise.all([
+          db.collection("transactions").doc(result.txId).get(),
+          db.collection("notifications").doc(result.notificationId).get(),
+        ]);
+        return res.json({
+          success: true,
+          data: {
+            transaction: txSnap.exists ? txSnap.data() : null,
+            notification: notifSnap.exists ? notifSnap.data() : null,
+            duplicate: true,
+          },
+        });
+      }
       return res.status(200).json({ success: true, data: null });
     }
 
-    const tx = {
-      id: `TX${Date.now()}`,
-      name: parsed.name,
-      rawName: parsed.rawName,
-      upiId: parsed.upiId || "",
-      amount: parsed.amount,
-      category: parsed.category,
-      direction: parsed.direction,
-      sourceApp: parsed.sourceApp,
-      icon: parsed.icon,
-      color: parsed.color,
-      rawTitle: parsed.rawTitle,
-      rawText: parsed.rawText,
-      createdAt: new Date().toISOString(),
-    };
+    if (result.ignored) {
+      return res.status(200).json({ success: true, data: null });
+    }
 
-    const newBalance = parsed.direction === "debit"
-      ? userDoc.balance - parsed.amount
-      : userDoc.balance + parsed.amount;
-
-    const notification = {
-      id: `NF${Date.now()}`,
-      title: parsed.direction === "credit" ? `Received Rs ${parsed.amount} from ${parsed.name}` : `Paid Rs ${parsed.amount} to ${parsed.name}`,
-      body: `${parsed.category} | ${parsed.sourceApp}`,
-      txId: tx.id,
-      createdAt: new Date().toISOString(),
-    };
-
-    const batch = db.batch();
-    batch.set(db.collection("users").doc("me"), { balance: newBalance }, { merge: true });
-    batch.set(db.collection("transactions").doc(tx.id), tx);
-    batch.set(db.collection("notifications").doc(notification.id), notification);
-    await batch.commit();
-
-    res.json({ success: true, data: { transaction: tx, notification } });
+    res.json({ success: true, data: { transaction: result.tx, notification: result.notification } });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
